@@ -753,6 +753,11 @@ body {
   color: var(--text-secondary);
 }
 
+/* Inside the dashboard's New players page, which shows its own title */
+.embedded .brand {
+  display: none;
+}
+
 .tabs {
   display: flex;
   gap: 4px;

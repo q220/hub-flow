@@ -1,5 +1,5 @@
 {
-  "name": "offline-player-visualizer",
+  "name": "hub-flow",
   "version": "1.0.0",
   "description": "Visualize offline Minecraft player locations on a top-down block map with heatmap overlay",
   "type": "module",
