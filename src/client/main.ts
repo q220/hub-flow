@@ -1,3 +1,8 @@
+// Leaflet and the styles are bundled: the page loads nothing from other hosts,
+// so it runs under the MCME dashboard's Content-Security-Policy
+import * as L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import './styles.css';
 import type { FlowPlayer, WorldInfo } from '../shared/protocol';
 import { apiUrl } from './api';
 import { initMap, setBlockMap, showDefaultHeatmap, getMap, flyTo, addPlayerMarker, clearPlayerMarkers } from './map';
@@ -8,9 +13,10 @@ import { initSidebar } from './sidebar';
 import { initPlayerLayer, setPlayerDimension } from './player-layer';
 import { initStatus, setStatus, clearStatus } from './status';
 
-declare const L: typeof import('leaflet');
-
 const $ = (id: string) => document.getElementById(id)!;
+
+// Inside the dashboard's New players page (?embed): the dashboard shows the title
+if (new URLSearchParams(location.search).has('embed')) document.documentElement.classList.add('embedded');
 
 let worldInfo: WorldInfo | null = null;
 let mapReady = false;

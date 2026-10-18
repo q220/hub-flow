@@ -5,7 +5,7 @@ import { escapeHtml } from './html';
 import { getMap } from './map';
 import { setStatus, clearStatus } from './status';
 
-declare const L: typeof import('leaflet');
+import * as L from 'leaflet';
 
 let clusterLayer: L.LayerGroup;
 let currentDimension = '';

@@ -1,4 +1,6 @@
-# Hub Player Flow (offline player visualizer)
+# Hub Player Flow (hub-flow)
+
+Formerly the offline player visualizer. On MCME it is the admin dashboard's **Players → New players** page: the dashboard serves it under `/hub-flow/` behind its own sign-in, and reads its signals for alerts.
 
 A web tool for finding problems in how new players get through the MCME hub: where they stop in the intro, whether their resource pack loads, whether they reach another server and come back. A second tab shows the hub world as a block map with logged-off players as a heatmap.
 
@@ -50,8 +52,8 @@ Log events are cached per rolled log file under `.cache/`. Servers delete logs a
 
 ```bash
 # Clone the repo
-git clone https://github.com/q220/offline-player-visualizer.git
-cd offline-player-visualizer
+git clone https://github.com/q220/hub-flow.git
+cd hub-flow
 
 # Install dependencies
 npm install
@@ -70,7 +72,19 @@ npx tsx src/server/index.ts /path/to/your/minecraft/world
 
 Then open http://localhost:3000 in your browser.
 
-On MCME, `start.sh` runs it in a `screen` session named `visualizer` against the hub's world (`servers-mcme/hub/newplayer`), on `127.0.0.1:9191`, at low CPU and disk priority.
+### Running it as a service
+
+On MCME it runs as the systemd user service `hub-flow`, from the production build, on `127.0.0.1:9191`, at low CPU and disk priority. The admin dashboard serves it under `/hub-flow/` and lets only signed-in staff with its `hubflow.view` permission through, so the tool itself has no sign-in and must never listen on a public address.
+
+```bash
+scripts/deploy.sh --build-only                      # first time: install and build
+scripts/install-service.sh /path/to/world [port]    # write and enable hub-flow.service
+systemctl --user start hub-flow
+scripts/deploy.sh                                   # later: pull, build, restart, wait until it answers
+journalctl --user -u hub-flow -f                    # its output
+```
+
+Keep the world path the same when you move the tool or change how it runs: the folders in `.cache/` and `data/` are named after it. `start.sh` only restarts the service. The page loads nothing from other hosts (Leaflet is bundled), so it works under the dashboard's Content-Security-Policy: keep it that way. Opened inside the dashboard (`?embed`), it leaves out its own title.
 
 ### What happens at startup
 

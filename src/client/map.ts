@@ -3,7 +3,7 @@ import { apiUrl } from './api';
 import { escapeHtml } from './html';
 import { setStatus, clearStatus } from './status';
 
-declare const L: typeof import('leaflet');
+import * as L from 'leaflet';
 
 let map: L.Map;
 let blockMapLayer: L.GridLayer | null = null;

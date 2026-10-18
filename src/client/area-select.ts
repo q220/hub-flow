@@ -1,6 +1,6 @@
 import type { WorldInfo } from '../shared/protocol';
 
-declare const L: typeof import('leaflet');
+import * as L from 'leaflet';
 
 type BoundsRect = { minX: number; maxX: number; minZ: number; maxZ: number };
 type BoundsCallback = (bounds: BoundsRect | null, opts?: { fit?: boolean }) => void;
