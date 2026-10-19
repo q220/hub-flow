@@ -24,6 +24,7 @@ The default view (`#flow`). It refreshes its data every 15 minutes.
 |---|---|---|
 | Player files | First join, last online, position, name | `players/data/` or `playerdata/` in the world |
 | MCME-Introduction | Who finished (`finishedPlayerList.uid`); room boxes (`locations.yml`) | `plugins/MCME-Introduction` next to the world (`INTRO_DIR`) |
+| MCME-Introduction flow log (1.4.0+) | Each player's way through the intro rooms, by UUID: rooms entered and passed over, the client, pack results and how long they took, how they left each room, finishing, reminders, `/confirm`. For players who joined since its first `start`, the intro outcome, pack result and game version come from it | `flow/YYYY-MM-DD.jsonl` in the plugin folder (`INTRO_FLOW_DIR`) |
 | MCME-Architect database | Each player's latest resource pack and its load result (`architect_rp`) | Credentials from `plugins/MCME-Architect/config.yml` (`ARCHITECT_DB_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_NAME`) |
 | Plan database | Each player's latest game version (`plan_version_protocol`, from Plan's ViaVersion integration) | Credentials from `plugins/Plan/config.yml` (`PLAN_DB_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_NAME`) |
 | Hub server logs | Hub visits per player | `logs/` next to the world (`HUB_LOG_DIR`) |
@@ -31,6 +32,8 @@ The default view (`#flow`). It refreshes its data every 15 minutes.
 | `events.json` | Dated changes drawn on the charts (`{"date": "YYYY-MM-DD", "label": "..."}`) | Working directory (`FLOW_EVENTS_FILE`) |
 
 Log events are cached per rolled log file under `.cache/`. Servers delete logs after about three months, so what the logs say about each new player (hub visits, first visit length, reaching another server, coming back within 7 days) is also kept in `data/<world>-<hash>/flow-history.json`, frozen 8 days after the first join. `data/<world>-<hash>/pack-releases.json` notes when each resource pack release first appeared in Architect's table, which only keeps each player's latest pack without a time; releases already there on the first run have no date. Unlike `.cache/`, `data/` cannot be rebuilt: back it up. Players who joined before the first run with logs still covering them stay unknown; the page says so where it matters.
+
+The flow log is MCME-Introduction's record of each step through the rooms; `docs/flow-log.md` in the plugin's repository is its contract. Days before yesterday are cached under `.cache/`; today's and yesterday's files are read on from where the last refresh stopped. A missing folder means no flow log: the page works as before. For players who first joined at or after its first `start` event, the outcome, the intro's pack result and the game version come from their journey; everyone earlier is inferred as before, from the finished list, their position, Architect and Plan. `/api/flow` counts in `journeys` where the two disagree. The plugin deletes the flow log after 90 days, so a summary of each journey is kept in `flow-history.json` too, frozen 8 days after the first join. That file is version 2 since the flow log; a version 1 file is converted in place at the first save, and the original kept as `flow-history.v1.json`.
 
 ## Map features
 
@@ -106,6 +109,11 @@ npm run dev
 ```
 
 This runs the server (with hot reload via tsx) and the Vite dev server concurrently. The Vite dev server proxies API requests to the backend.
+
+```bash
+npm test             # the tests (src/**/*.test.ts), with Node's own test runner through tsx; Node 22 or later
+npm run typecheck
+```
 
 ### Configuration
 
