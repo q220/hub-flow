@@ -171,3 +171,18 @@ test('a save that fails after the copy leaves the version 1 file as it was', () 
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf-8')).version, 2);
   assert.deepEqual(fs.readdirSync(dir).sort(), ['flow-history.json', 'flow-history.v1.json']);
 });
+
+test('leaves a newer version alone whatever its shape', () => {
+  for (const newer of [
+    '{"version":3,"players":[["0b7c2a58-1d2e-4f3a-9b8c-7d6e5f4a3b2c",{"firstJoined":1790668800000}]]}',
+    '{"version":3,"entries":{"0b7c2a58-1d2e-4f3a-9b8c-7d6e5f4a3b2c":{}}}',
+  ]) {
+    const file = historyIn(newer);
+    const history = FlowHistory.load(file);
+    assert.equal(history.size, 0);
+    history.record('a', NOW - DAY, { sessions: 1 }, NOW);
+    assert.equal(history.save(), false);
+    assert.equal(fs.readFileSync(file, 'utf-8'), newer);
+    assert.deepEqual(fs.readdirSync(path.dirname(file)), ['flow-history.json']);
+  }
+});

@@ -78,6 +78,11 @@ export class FlowHistory {
     let data: any;
     try {
       data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      // A newer release's file may be shaped otherwise: leave it alone before looking inside
+      if (Number.isInteger(data?.version) && data.version > FILE_VERSION) {
+        console.warn(`  Flow history is version ${data.version}, from a newer release; it is left alone until that release runs again`);
+        return new FlowHistory(file, entries, data.version, true);
+      }
       if (!Number.isInteger(data?.version) || data.version < 1 || typeof data.players !== 'object' || data.players === null || Array.isArray(data.players)) {
         throw new Error(`unknown format ${data?.version}`);
       }
@@ -87,10 +92,6 @@ export class FlowHistory {
       fs.renameSync(file, aside);
       console.warn(`  Flow history unreadable (${e.message}); moved to ${aside}`);
       return new FlowHistory(file, entries, FILE_VERSION, false);
-    }
-    if (data.version > FILE_VERSION) {
-      console.warn(`  Flow history is version ${data.version}, from a newer release; it is left alone until that release runs again`);
-      return new FlowHistory(file, entries, data.version, true);
     }
     // A version 1 entry is a version 2 entry without a journey
     for (const [uuid, entry] of Object.entries(data.players)) entries.set(uuid, entry as HistoryEntry);
