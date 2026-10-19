@@ -340,3 +340,18 @@ export interface FlowPlayersResponse {
   total: number;
   players: FlowPlayer[];
 }
+
+/* ---- MCME-Introduction's flow log (1.4.0+) ---- */
+
+/** The client fields of an `enter` or `skip`; any of them can be missing */
+export interface JourneyClient {
+  /** ViaVersion's name for the protocol, e.g. 26.2 or 26.1-26.1.2 */
+  version?: string;
+  protocol?: number;
+  /** The brand the client reported, e.g. vanilla or fabric; null when it sent none */
+  brand?: string | null;
+  /** MCME-Architect saw MCME's marker mod */
+  marker?: boolean;
+  /** The version is one the compatibility room lets through */
+  supported?: boolean;
+}
