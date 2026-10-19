@@ -186,3 +186,15 @@ test('leaves a newer version alone whatever its shape', () => {
     assert.deepEqual(fs.readdirSync(path.dirname(file)), ['flow-history.json']);
   }
 });
+
+test('a frozen version 1 entry gains a journey and keeps its fields', () => {
+  const file = historyIn(V1_FILE);
+  const uuid = '0b7c2a58-1d2e-4f3a-9b8c-7d6e5f4a3b2c';
+  const history = FlowHistory.load(file);
+  history.recordJourney(uuid, 1790668800000, summary('finished'), NOW);
+  history.record(uuid, 1790668800000, { sessions: 9, reachedServer: false }, NOW);
+  const expected = { ...V1_PLAYERS[uuid], journey: summary('finished'), journeyFrozen: true };
+  assert.deepEqual(history.get(uuid), expected);
+  history.save();
+  assert.deepEqual(FlowHistory.load(file).get(uuid), expected);
+});

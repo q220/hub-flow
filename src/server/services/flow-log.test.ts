@@ -372,3 +372,17 @@ test('each flow folder has its own cache', async () => {
   assert.equal(await room(b), 'WELCOME');
   assert.equal(await room(a), 'welcome');
 });
+
+test('a character split between two reads of an open day comes out whole', async () => {
+  const { dir, reader } = setup();
+  const today = path.join(dir, '2026-10-19.jsonl');
+  const brand = 'café-\u{1F600}';
+  const bytes = Buffer.from(line({ time: '2026-10-19T08:00:00Z', event: 'enter', uuid: UUID, room: 'welcome', brand }) + '\n');
+  const cut = bytes.indexOf(Buffer.from('\u{1F600}')) + 2; // inside the emoji's four bytes
+  fs.writeFileSync(today, Buffer.concat([Buffer.from(EXAMPLE[0] + '\n'), bytes.subarray(0, cut)]));
+  assert.equal((await reader.read(NOW))?.events.length, 1);
+  fs.appendFileSync(today, bytes.subarray(cut));
+  const data = await reader.read(NOW);
+  assert.equal(data?.badLines, 0);
+  assert.equal((data?.events[1] as { client: { brand?: string } }).client.brand, brand);
+});
