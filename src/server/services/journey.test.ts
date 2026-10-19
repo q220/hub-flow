@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { FlowLogReader, parseLine, type FlowLogEvent } from './flow-log.js';
-import { assembleJourneys, clientName, journeyClient, journeyOutcome, journeyPack, summarizeJourney } from './journey.js';
+import { assembleJourneys, clientName, journeyClient, journeyOutcome, journeyPack, roomPackWait, summarizeJourney } from './journey.js';
 import type { PlayerJourney } from '../../shared/protocol.js';
 
 const temps: string[] = [];
@@ -63,7 +63,10 @@ test('folds the contract example into one journey', () => {
     confirms: [],
   } satisfies PlayerJourney);
   assert.equal(journeyOutcome(j), 'compatibility');
-  assert.deepEqual(journeyPack(j), { result: 'loaded', waitMs: 52 });
+  assert.equal(journeyPack(j), 'loaded');
+  // Each room's own wait, not only the last room's
+  assert.equal(roomPackWait(j, 'welcome'), 3527);
+  assert.equal(roomPackWait(j, 'compatibility'), 52);
   assert.equal(clientName(journeyClient(j)!), '1.21.4');
 });
 
@@ -168,7 +171,7 @@ test("the intro's pack result: the last final one, else the last", () => {
     return journeyPack(assembleJourneys(events(
       { time: '2026-10-18T06:59:00Z', event: 'enter', uuid: A, room: 'welcome', ...fabric262 },
       ...lines,
-    )).get(A)!)?.result;
+    )).get(A)!);
   };
   assert.equal(pack('not_sent', 'loaded'), 'loaded');
   assert.equal(pack('failed_download', 'not_sent'), 'failed_download');
@@ -191,7 +194,10 @@ test("the intro's pack result: the last final one, else the last", () => {
     { time: '2026-10-18T08:00:00Z', event: 'enter', uuid: A, room: 'welcome', ...fabric262 },
     { time: '2026-10-18T08:00:04Z', event: 'pack', uuid: A, room: 'welcome', result: 'loaded', waitMs: 4000 },
   )).get(A)!;
-  assert.deepEqual(journeyPack(j), { result: 'loaded', waitMs: 4000 });
+  assert.equal(journeyPack(j), 'loaded');
+  // The wait of the room's first final result: what the first try took
+  assert.equal(roomPackWait(j, 'welcome'), 9000);
+  assert.equal(roomPackWait(j, 'compatibility'), undefined);
 });
 
 test('the outcome: finished, the room of the last visit, or other', () => {
@@ -216,7 +222,7 @@ test('client names follow the protocol, as for Plan, else the version the log gi
 test('summarizes a journey for the history', () => {
   const quit = assembleJourneys(events(...EXAMPLE, { time: '2026-10-18T18:10:00Z', event: 'reminder', uuid: A, warning: 'version' })).get(A)!;
   assert.deepEqual(summarizeJourney(quit), {
-    outcome: 'compatibility', pack: 'loaded', packWaitMs: 52,
+    outcome: 'compatibility', pack: 'loaded', welcomePackWaitMs: 3527, compatibilityPackWaitMs: 52,
     protocol: 769, version: '1.21.4', brand: 'vanilla', marker: false, supported: false, warning: 'version',
     welcomeVisits: 1, compatibilityVisits: 1, lastExit: 'quit', reminders: 1,
   });

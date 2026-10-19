@@ -12,9 +12,11 @@ import { defined, type FlowLogEvent } from './flow-log.js';
 /** What the history keeps of a journey once the flow log is gone */
 export interface JourneySummary {
   outcome: IntroStatus;
-  /** The intro's pack result (journeyPack) and how long it took */
+  /** The intro's pack result (journeyPack) */
   pack?: PackResult;
-  packWaitMs?: number;
+  /** How long each room waited for its first final pack result (roomPackWait) */
+  welcomePackWaitMs?: number;
+  compatibilityPackWaitMs?: number;
   /** The client of the last room entered or passed over */
   protocol?: number;
   version?: string;
@@ -116,17 +118,27 @@ const FINAL_RESULTS = new Map<string, PackResult>([
 ]);
 
 /** The intro's pack result: the last final one over all visits, else not_sent; undefined without one */
-export function journeyPack(j: PlayerJourney): { result: PackResult; waitMs?: number } | undefined {
-  let final: { result: PackResult; waitMs?: number } | undefined;
-  let notSent: { result: PackResult; waitMs?: number } | undefined;
+export function journeyPack(j: PlayerJourney): PackResult | undefined {
+  let final: PackResult | undefined;
+  let notSent = false;
   for (const v of j.visits) {
     for (const p of v.packs) {
       const result = FINAL_RESULTS.get(p.result);
-      if (result) final = defined({ result, waitMs: p.waitMs });
-      else if (p.result === 'not_sent') notSent = defined({ result: 'not_sent' as const, waitMs: p.waitMs });
+      if (result) final = result;
+      else if (p.result === 'not_sent') notSent = true;
     }
   }
-  return final ?? notSent;
+  return final ?? (notSent ? 'not_sent' : undefined);
+}
+
+/** How long a room waited for its first final pack result, over all visits to it */
+export function roomPackWait(j: PlayerJourney, room: string): number | undefined {
+  for (const v of j.visits) {
+    if (v.room !== room) continue;
+    const first = v.packs.find((p) => FINAL_RESULTS.has(p.result));
+    if (first) return first.waitMs;
+  }
+  return undefined;
 }
 
 /** The client of the last room entered or passed over */
@@ -145,14 +157,14 @@ export function clientName(c: Pick<JourneyClient, 'protocol' | 'version'>): stri
 }
 
 export function summarizeJourney(j: PlayerJourney): JourneySummary {
-  const pack = journeyPack(j);
   const client = journeyClient(j) ?? {};
   const last = j.visits.at(-1);
   const choices = j.confirms.flatMap((c) => (c.choice ? [c.choice] : []));
   return defined({
     outcome: journeyOutcome(j),
-    pack: pack?.result,
-    packWaitMs: pack?.waitMs,
+    pack: journeyPack(j),
+    welcomePackWaitMs: roomPackWait(j, 'welcome'),
+    compatibilityPackWaitMs: roomPackWait(j, 'compatibility'),
     protocol: client.protocol,
     version: client.version,
     brand: client.brand,

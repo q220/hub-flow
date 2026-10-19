@@ -261,7 +261,7 @@ export class FlowModel {
     const journey = start !== null && fp.firstJoined >= start ? this.src.flowLog!.journeys.get(fp.uuid) : undefined;
     if (journey) {
       const outcome = journeyOutcome(journey);
-      const pack = journeyPack(journey)?.result;
+      const pack = journeyPack(journey);
       const c = journeyClient(journey);
       const client = c && clientName(c);
       const disagreements = this.disagreements(fp, outcome, pack, client);
