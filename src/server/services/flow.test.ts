@@ -259,3 +259,32 @@ test('a flow log without a start yet covers nobody', () => {
   assert.equal(players.get(P.quitCompat)!.outcomeFrom, 'inferred');
   assert.equal(players.get(P.history)!.outcomeFrom, 'history');
 });
+
+/** n new players in the last 14 days with a finish in the log, `unlisted` of them missing from the list, and 20 listed before */
+function finishersModel(n: number, unlisted: number): FlowModel {
+  const players: PlayerRecord[] = [];
+  const lines: object[] = [];
+  const finished = new Set<string>();
+  for (let i = 0; i < n + 20; i++) {
+    const id = uuid(1000 + i);
+    const joined = new Date(i < n ? NOW - (1 + i % 12) * 24 * 60 * 60 * 1000 : NOW - (20 + i % 30) * 24 * 60 * 60 * 1000);
+    players.push(player(id, joined.toISOString(), ELSEWHERE));
+    lines.push({ time: new Date(joined.getTime() + 1000).toISOString(), event: 'enter', uuid: id, room: 'welcome', ...fabric262 });
+    lines.push({ time: new Date(joined.getTime() + 2000).toISOString(), event: 'finish', uuid: id, first: true });
+    if (i >= unlisted) finished.add(id);
+  }
+  lines.sort((a, b) => (a as { time: string }).time.localeCompare((b as { time: string }).time));
+  return new FlowModel(sources({
+    players, intro: { ...intro, finished }, packs: null, clients: null, history: null,
+    flowLog: { coverageStart: t('2026-06-01T00:00:00Z'), badLines: 0, journeys: assembleJourneys(events(...lines)) },
+  }), NOW);
+}
+
+test('a signal when the log has finishers the finished list lacks', () => {
+  const signal = (m: FlowModel) => m.signalsReport().signals.find((s) => s.id === 'finish-not-listed');
+  const raised = signal(finishersModel(20, 5));
+  assert.equal(raised?.level, 'warning');
+  assert.match(raised!.title, /^5 new players finished the intro/);
+  assert.equal(signal(finishersModel(20, 4)), undefined, 'fewer than 5');
+  assert.equal(signal(finishersModel(200, 5)), undefined, 'under 3% of the finishers');
+});

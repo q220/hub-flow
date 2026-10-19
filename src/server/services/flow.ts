@@ -786,6 +786,18 @@ export class FlowModel {
       });
     }
 
+    // Finished by the flow log, which records the finish before the list is written
+    const logFinishers = recentPlayers.filter((p) => p.outcomeFrom === 'log' && p.outcome === 'finished');
+    const unlisted = logFinishers.filter((p) => p.disagreements?.includes('finish-not-listed')).length;
+    if (unlisted >= 5 && unlisted / logFinishers.length >= 0.03) {
+      out.push({
+        id: 'finish-not-listed',
+        level: 'warning',
+        title: `${plural(unlisted, 'new player')} finished the intro but are not on the finished list`,
+        detail: `${unlisted.toLocaleString('en-US')} of the ${logFinishers.length.toLocaleString('en-US')} who finished in the last 14 days by the flow log are not on finishedPlayerList.uid, so they would get the intro again. Check whether the intro chain still records finishers.`,
+      });
+    }
+
     // After the intro: moving on to another server
     const finishedRecent = recentPlayers.filter((p) => p.outcome === 'finished' && p.reachedServer !== undefined);
     const finishedBase = this.inRange(Math.max(from - SIGNAL_BASELINE_MS, DEFAULT_HUB_DATE), from)
