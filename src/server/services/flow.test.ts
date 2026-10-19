@@ -1,4 +1,4 @@
-import { test, after } from 'node:test';
+import { test, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
@@ -7,7 +7,7 @@ import type { FlowPlayer, PackInfo, PlayerRecord } from '../../shared/protocol.j
 import { FlowModel, type FlowSources } from './flow.js';
 import { FlowHistory } from './flow-history.js';
 import { parseLine, type FlowLogEvent } from './flow-log.js';
-import { assembleJourneys, summarizeJourney, type JourneySummary } from './journey.js';
+import { assembleJourneys, loadFlowLog, summarizeJourney, type JourneySummary } from './journey.js';
 import type { IntroData } from './intro-progress.js';
 
 const temps: string[] = [];
@@ -116,7 +116,7 @@ function sources(over: Partial<FlowSources> = {}): FlowSources {
     releases: null,
     serverVersion: '26.2',
     events: [],
-    flowLog: { coverageStart: COVERAGE, badLines: 2, journeys: assembleJourneys(LOG) },
+    flowLog: { coverageStart: COVERAGE, badLines: 2, complete: true, journeys: assembleJourneys(LOG) },
     ...over,
   };
 }
@@ -204,7 +204,7 @@ test('the counts take the intro from the journey, and the check counts disagreem
   assert.equal(r.sources.flowLog, true);
   assert.equal(r.sources.flowLogFrom, t('2026-09-01T10:00:00Z'), 'the history reaches further back than the log');
   assert.deepEqual(r.journeys, {
-    coverageStart: COVERAGE, badLines: 2,
+    coverageStart: COVERAGE, badLines: 2, complete: true,
     covered: 6, withJourney: 5, fromHistory: 2,
     disagreements: 3, finishNotListed: 1, listedNotFinished: 1, roomDiffers: 1,
     clientDiffers: 1, packDiffers: 1,
@@ -255,7 +255,7 @@ test('without the flow log everything is inferred as before', () => {
 });
 
 test('a flow log without a start yet covers nobody', () => {
-  const players = byUuid(new FlowModel(sources({ flowLog: { coverageStart: null, badLines: 0, journeys: assembleJourneys(LOG) } }), NOW));
+  const players = byUuid(new FlowModel(sources({ flowLog: { coverageStart: null, badLines: 0, complete: true, journeys: assembleJourneys(LOG) } }), NOW));
   assert.equal(players.get(P.quitCompat)!.outcomeFrom, 'inferred');
   assert.equal(players.get(P.history)!.outcomeFrom, 'history');
 });
@@ -276,7 +276,7 @@ function finishersModel(n: number, unlisted: number): FlowModel {
   lines.sort((a, b) => (a as { time: string }).time.localeCompare((b as { time: string }).time));
   return new FlowModel(sources({
     players, intro: { ...intro, finished }, packs: null, clients: null, history: null,
-    flowLog: { coverageStart: t('2026-06-01T00:00:00Z'), badLines: 0, journeys: assembleJourneys(events(...lines)) },
+    flowLog: { coverageStart: t('2026-06-01T00:00:00Z'), badLines: 0, complete: true, journeys: assembleJourneys(events(...lines)) },
   }), NOW);
 }
 
@@ -287,4 +287,28 @@ test('a signal when the log has finishers the finished list lacks', () => {
   assert.match(raised!.title, /^5 new players finished the intro/);
   assert.equal(signal(finishersModel(20, 4)), undefined, 'fewer than 5');
   assert.equal(signal(finishersModel(200, 5)), undefined, 'under 3% of the finishers');
+});
+
+test('an incomplete read of the flow log records no journeys in the history', () => {
+  const src = sources();
+  src.flowLog!.complete = false;
+  const model = new FlowModel(src, NOW);
+  assert.equal(byUuid(model).get(P.quitCompat)!.outcomeFrom, 'log', 'the page still shows what was read');
+  assert.equal(model.query(t('2026-08-01T00:00:00Z'), NOW + 1).journeys?.complete, false);
+  model.recordHistory(src.history!);
+  assert.equal(src.history!.get(P.quitCompat), undefined);
+  assert.equal(src.history!.get(P.oldCovered), undefined);
+});
+
+test('a reader that throws leaves the refresh without a flow log', async () => {
+  const warn = mock.method(console, 'warn', () => {});
+  try {
+    assert.equal(await loadFlowLog({ read: async () => { throw Object.assign(new Error('boom'), { code: 'EMFILE' }); } }), null);
+    assert.equal(warn.mock.callCount(), 1);
+  } finally {
+    warn.mock.restore();
+  }
+  const log = await loadFlowLog({ read: async () => ({ events: LOG, coverageStart: COVERAGE, badLines: 1, days: 1, complete: true }) });
+  assert.equal(log?.journeys.get(P.quitCompat)?.visits.length, 2);
+  assert.equal(log?.badLines, 1);
 });

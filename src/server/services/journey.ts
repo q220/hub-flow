@@ -1,6 +1,6 @@
 import type { IntroStatus, JourneyClient, JourneyVisit, PackResult, PlayerJourney } from '../../shared/protocol.js';
 import { clientVersionName } from '../../shared/constants.js';
-import { defined, type FlowLogEvent } from './flow-log.js';
+import { defined, type FlowLogData, type FlowLogEvent, type FlowLogReader } from './flow-log.js';
 
 /**
  * Each player's way through the intro rooms, folded from the flow log's
@@ -33,6 +33,29 @@ export interface JourneySummary {
   reminders: number;
   /** /confirm choices, in order */
   confirms?: string[];
+}
+
+/** The flow log as the Flow model takes it */
+export interface FlowLogSource {
+  /** Players who first joined since are covered; null before the first `start` */
+  coverageStart: number | null;
+  badLines: number;
+  /** Every day file was read; when not, no journey is recorded in the history */
+  complete: boolean;
+  journeys: Map<string, PlayerJourney>;
+}
+
+/** Read and fold the flow log: null without one, and when reading it fails, so a refresh never fails on it */
+export async function loadFlowLog(reader: Pick<FlowLogReader, 'read'>): Promise<FlowLogSource | null> {
+  let log: FlowLogData | null;
+  try {
+    log = await reader.read();
+  } catch (e: any) {
+    console.warn(`  Flow log unavailable: ${e?.code || e?.message}`);
+    return null;
+  }
+  if (!log) return null;
+  return { coverageStart: log.coverageStart, badLines: log.badLines, complete: log.complete, journeys: assembleJourneys(log.events) };
 }
 
 export function assembleJourneys(events: FlowLogEvent[]): Map<string, PlayerJourney> {

@@ -332,6 +332,8 @@ export interface JourneyCheck {
   coverageStart: number | null;
   /** Lines skipped as unreadable: not JSON, or without a time, an event or a player (an incomplete last line is not counted) */
   badLines: number;
+  /** False when a day file could not be read: the journeys are partial, and none is recorded in the history */
+  complete: boolean;
   /** Players who joined since coverageStart */
   covered: number;
   /** ...of those, with a journey; the others are inferred as before */

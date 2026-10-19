@@ -35,6 +35,8 @@ export interface FlowLogData {
   badLines: number;
   /** Day files read */
   days: number;
+  /** False when a day file could not be read (other than being deleted): the events are partial */
+  complete: boolean;
 }
 
 /** Change whenever parsing changes, so cached days are read again */
@@ -65,6 +67,8 @@ interface OpenDay extends DayPart {
 
 export class FlowLogReader {
   private readonly open = new Map<string, OpenDay>();
+  /** Warned about a failing read; again only once a read has worked */
+  private warned = false;
 
   constructor(
     private readonly dir: string,
@@ -76,7 +80,8 @@ export class FlowLogReader {
     let names: string[];
     try {
       names = await fs.promises.readdir(this.dir);
-    } catch {
+    } catch (e: any) {
+      if (e?.code !== 'ENOENT') this.warnOnce(`could not list ${this.dir} (${e?.code || e?.message})`);
       this.open.clear();
       return null;
     }
@@ -86,6 +91,7 @@ export class FlowLogReader {
     const events: FlowLogEvent[] = [];
     let badLines = 0;
     let read = 0;
+    let complete = true;
     const closed = new Set<string>();
     for (const name of days) {
       const file = path.join(this.dir, name);
@@ -100,8 +106,12 @@ export class FlowLogReader {
         } else {
           part = await this.openDay(name, file);
         }
-      } catch {
-        continue; // deleted while being read: the plugin drops days older than 90
+      } catch (e: any) {
+        // Deleted while being read: the plugin drops days older than 90
+        if (e?.code === 'ENOENT') continue;
+        complete = false;
+        this.warnOnce(`could not read ${name} (${e?.code || e?.message}); journeys are not recorded in the history until it reads`);
+        continue;
       }
       read++;
       for (const e of part.events) events.push(e);
@@ -110,10 +120,20 @@ export class FlowLogReader {
     for (const name of [...this.open.keys()]) {
       if (!days.includes(name)) this.open.delete(name);
     }
-    this.pruneCache(closed);
+    if (complete) {
+      this.pruneCache(closed);
+      this.warned = false;
+    }
 
     const start = events.find((e) => e.event === 'start');
-    return { events, coverageStart: start?.time ?? null, badLines, days: read };
+    return { events, coverageStart: start?.time ?? null, badLines, days: read, complete };
+  }
+
+  /** File and folder names only: the log's contents never reach the console */
+  private warnOnce(message: string): void {
+    if (this.warned) return;
+    this.warned = true;
+    console.warn(`  Flow log: ${message}`);
   }
 
   private async closedDay(name: string, file: string, size: number): Promise<CachedDay> {

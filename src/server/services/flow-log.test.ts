@@ -1,4 +1,4 @@
-import { test, after } from 'node:test';
+import { test, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
@@ -86,7 +86,7 @@ test('a missing folder is no flow log; an empty one has no coverage yet', async 
   const root = tempDir();
   assert.equal(await new FlowLogReader(path.join(root, 'flow'), path.join(root, 'cache')).read(NOW), null);
   const { reader } = setup();
-  assert.deepEqual(await reader.read(NOW), { events: [], coverageStart: null, badLines: 0, days: 0 });
+  assert.deepEqual(await reader.read(NOW), { events: [], coverageStart: null, badLines: 0, days: 0, complete: true });
 });
 
 test('coverage starts at the first start event', async () => {
@@ -283,5 +283,55 @@ test('INTRO_FLOW_DIR, else flow/ in INTRO_DIR, else in the plugin folder next to
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+  }
+});
+
+/** Make one fs.promises call fail for files whose name ends in `name` */
+function failFor<K extends 'readFile' | 'open' | 'stat'>(method: K, name: string, code: string) {
+  const original = (fs.promises[method] as (...args: unknown[]) => Promise<unknown>).bind(fs.promises);
+  return mock.method(fs.promises, method, (async (file: unknown, ...rest: unknown[]) => {
+    if (String(file).endsWith(name)) throw Object.assign(new Error(`${code}: ${String(file)}`), { code });
+    return original(file, ...rest);
+  }) as never);
+}
+
+test('a day that cannot be read makes the read incomplete, and is warned about once', async () => {
+  const { dir, reader } = setup();
+  write(dir, '2026-10-10', [START('2026-10-10T06:00:00Z'), EXAMPLE[0]]);
+  write(dir, '2026-10-11', [EXAMPLE[1]]);
+  write(dir, '2026-10-19', [EXAMPLE[2]]);
+  const warn = mock.method(console, 'warn', () => {});
+  const readFile = failFor('readFile', '2026-10-11.jsonl', 'EIO');
+  const open = failFor('open', '2026-10-19.jsonl', 'EACCES');
+  try {
+    const first = await reader.read(NOW);
+    assert.equal(first?.complete, false);
+    assert.deepEqual(first?.events.map((e) => e.event), ['start', 'enter']);
+    await reader.read(NOW);
+    assert.equal(warn.mock.callCount(), 1, 'once while it keeps failing');
+    const message = String(warn.mock.calls[0].arguments[0]);
+    assert.match(message, /2026-10-11\.jsonl|2026-10-19\.jsonl/);
+    assert.ok(!message.includes(UUID));
+  } finally {
+    readFile.mock.restore();
+    open.mock.restore();
+    warn.mock.restore();
+  }
+  const again = await reader.read(NOW);
+  assert.equal(again?.complete, true);
+  assert.deepEqual(again?.events.map((e) => e.event), ['start', 'enter', 'pack', 'exit']);
+});
+
+test('a day deleted while being read is skipped, and the read stays complete', async () => {
+  const { dir, reader } = setup();
+  write(dir, '2026-10-10', [EXAMPLE[0]]);
+  write(dir, '2026-10-11', [EXAMPLE[1]]);
+  const stat = failFor('stat', '2026-10-10.jsonl', 'ENOENT');
+  try {
+    const data = await reader.read(NOW);
+    assert.equal(data?.complete, true);
+    assert.deepEqual(data?.events.map((e) => e.event), ['pack']);
+  } finally {
+    stat.mock.restore();
   }
 });

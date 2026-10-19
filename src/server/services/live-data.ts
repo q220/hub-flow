@@ -11,7 +11,7 @@ import { FlowModel, loadFlowEvents } from './flow.js';
 import { FlowHistory, historyFile } from './flow-history.js';
 import { ReleaseLog, releaseLogFile } from './release-log.js';
 import { FlowLogReader, flowLogDir } from './flow-log.js';
-import { assembleJourneys } from './journey.js';
+import { loadFlowLog } from './journey.js';
 
 /** The flow model the API serves; replaced whole on every refresh */
 export const liveData: { flow: FlowModel | null } = { flow: null };
@@ -57,11 +57,10 @@ export async function refreshData(opts: { initial: boolean; serverVersion: strin
   const intro = loadIntroData(worldPath);
   playerStore.setIntroData(intro);
   flowLogReader ??= new FlowLogReader(flowLogDir(worldPath));
-  const [packs, sessions, activity, clients, log] = await Promise.all([
+  const [packs, sessions, activity, clients, flowLog] = await Promise.all([
     loadPackStatus(worldPath), loadHubSessions(worldPath), loadProxyActivity(worldPath), loadClientVersions(worldPath),
-    flowLogReader.read(),
+    loadFlowLog(flowLogReader),
   ]);
-  const flowLog = log ? { coverageStart: log.coverageStart, badLines: log.badLines, journeys: assembleJourneys(log.events) } : null;
   const events = loadFlowEvents();
   history ??= FlowHistory.load();
   releases ??= ReleaseLog.load();
@@ -93,7 +92,7 @@ export async function refreshData(opts: { initial: boolean; serverVersion: strin
     activity ? `proxy activity since ${new Date(activity.coverageStart).toLocaleDateString('en-CA')}` : 'no proxy logs',
     !flowLog ? 'no flow log'
       : `${flowLog.coverageStart !== null ? `flow log since ${new Date(flowLog.coverageStart).toLocaleDateString('en-CA')}` : 'flow log without a start yet'}`
-        + ` (${flowLog.journeys.size} journeys${flowLog.badLines > 0 ? `, ${flowLog.badLines} unreadable lines` : ''})`,
+        + ` (${flowLog.journeys.size} journeys${flowLog.badLines > 0 ? `, ${flowLog.badLines} unreadable lines` : ''}${flowLog.complete ? '' : ', some days unreadable'})`,
     `${events.length} events`,
     `history of ${history.size} players`,
   ];

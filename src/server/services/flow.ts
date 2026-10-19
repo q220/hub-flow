@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type {
   ClientGroup, EventImpact, FlowBucket, FlowCounts, FlowEvent, FlowPlayer, FlowResponse, FlowSignal, FlowSignalsResponse, IntroStatus,
-  JourneyCheck, JourneyDisagreement, NewRelease, PackGroup, PackHealthRow, PackInfo, PackResult, PackResultGroup, PlayerJourney,
+  JourneyCheck, JourneyDisagreement, NewRelease, PackGroup, PackHealthRow, PackInfo, PackResult, PackResultGroup,
   PlayerRecord, ReleaseCheck, SessionStats, VersionPackResults,
 } from '../../shared/protocol.js';
 import { clientVersionName } from '../../shared/constants.js';
@@ -12,7 +12,9 @@ import type { SessionData } from './hub-sessions.js';
 import type { ProxyActivity } from './proxy-activity.js';
 import type { FlowHistory, HistoryEntry, LoggedFields } from './flow-history.js';
 import { releaseKey, type ReleaseLog } from './release-log.js';
-import { clientName, journeyClient, journeyOutcome, journeyPack, summarizeJourney, type JourneySummary } from './journey.js';
+import {
+  clientName, journeyClient, journeyOutcome, journeyPack, summarizeJourney, type FlowLogSource, type JourneySummary,
+} from './journey.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const RETURN_WINDOW_MS = 7 * DAY;
@@ -58,13 +60,6 @@ export interface FlowSources {
   events: FlowEvent[];
   /** MCME-Introduction's flow log: each player's way through the rooms */
   flowLog: FlowLogSource | null;
-}
-
-export interface FlowLogSource {
-  /** Players who first joined since are covered; null before the first `start` */
-  coverageStart: number | null;
-  badLines: number;
-  journeys: Map<string, PlayerJourney>;
 }
 
 /** Dated changes to mark on the charts: FLOW_EVENTS_FILE, else events.json in the working directory */
@@ -300,6 +295,8 @@ export class FlowModel {
   /** Keep what the current logs say, so it outlives them */
   recordHistory(history: FlowHistory): void {
     for (const [uuid, { firstJoined, logged }] of this.fromLogs) history.record(uuid, firstJoined, logged, this.generatedAt);
+    // A partial read could replace a good summary, or freeze a wrong one
+    if (this.src.flowLog?.complete === false) return;
     for (const [uuid, { firstJoined, summary }] of this.fromJourneys) history.recordJourney(uuid, firstJoined, summary, this.generatedAt);
   }
 
@@ -308,7 +305,7 @@ export class FlowModel {
     const log = this.src.flowLog;
     if (!log) return null;
     const c: JourneyCheck = {
-      coverageStart: log.coverageStart, badLines: log.badLines,
+      coverageStart: log.coverageStart, badLines: log.badLines, complete: log.complete,
       covered: 0, withJourney: 0, fromHistory: 0,
       disagreements: 0, finishNotListed: 0, listedNotFinished: 0, roomDiffers: 0, clientDiffers: 0, packDiffers: 0,
     };
