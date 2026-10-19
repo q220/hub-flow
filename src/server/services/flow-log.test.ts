@@ -335,3 +335,25 @@ test('a day deleted while being read is skipped, and the read stays complete', a
     stat.mock.restore();
   }
 });
+
+test('caps the strings it keeps at 64 characters', async () => {
+  const { dir, reader } = setup();
+  const long = 'x'.repeat(32 * 1024);
+  const emoji = 'a'.repeat(63) + '\u{1F600}\u{1F600}';
+  write(dir, '2026-10-10', [
+    line({ time: '2026-10-10T06:00:00Z', event: 'start', plugin: long, supportedVersions: [long] }),
+    line({ time: '2026-10-10T07:00:00Z', event: 'enter', uuid: UUID, room: long, version: long, protocol: 776, brand: long, warning: long }),
+    line({ time: '2026-10-10T07:00:01Z', event: 'skip', uuid: UUID, room: 'compatibility', brand: emoji }),
+    line({ time: '2026-10-10T07:00:02Z', event: 'pack', uuid: UUID, room: 'welcome', result: long }),
+    line({ time: '2026-10-10T07:00:03Z', event: 'exit', uuid: UUID, room: 'welcome', how: long }),
+    line({ time: '2026-10-10T07:00:04Z', event: 'confirm', uuid: UUID, choice: long }),
+    line({ time: '2026-10-10T07:00:05Z', event: 'reminder', uuid: UUID, warning: long }),
+  ]);
+  const data = await reader.read(NOW);
+  const strings = JSON.stringify(data?.events).match(/"[^"]*"/g)!;
+  assert.ok(strings.every((s) => [...s].length <= 66), 'every string 64 characters or fewer');
+  const enter = data?.events[1] as { client: { brand: string } };
+  assert.equal(enter.client.brand, 'x'.repeat(64));
+  // Cut between characters, not inside one
+  assert.equal((data?.events[2] as { client: { brand: string } }).client.brand, 'a'.repeat(63) + '\u{1F600}');
+});

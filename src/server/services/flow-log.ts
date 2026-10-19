@@ -40,7 +40,9 @@ export interface FlowLogData {
 }
 
 /** Change whenever parsing changes, so cached days are read again */
-const PARSER_KEY = 'flow-log-v1';
+const PARSER_KEY = 'flow-log-v2';
+/** Longest string kept: a client's brand, for one, can be 32 KB, and strings reach the API and the history */
+const MAX_STRING = 64;
 const DAY_FILE = /^(\d{4}-\d\d-\d\d)\.jsonl$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LF = 0x0a;
@@ -213,7 +215,19 @@ function parseLines(text: string, into: DayPart): void {
 
 type LineResult = FlowLogEvent | 'empty' | 'unknown' | 'unparseable' | 'invalid';
 
-const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+/** The first MAX_STRING characters, cut between characters */
+function cap(s: string): string {
+  if (s.length <= MAX_STRING) return s;
+  let out = '';
+  let n = 0;
+  for (const ch of s) {
+    if (n++ === MAX_STRING) break;
+    out += ch;
+  }
+  return out;
+}
+
+const str = (v: unknown) => (typeof v === 'string' ? cap(v) : undefined);
 const bool = (v: unknown) => (typeof v === 'boolean' ? v : undefined);
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 
@@ -252,7 +266,9 @@ export function parseLine(line: string): LineResult {
     case 'start':
       return defined({
         time, event: 'start' as const, plugin: str(o.plugin),
-        supportedVersions: Array.isArray(o.supportedVersions) ? o.supportedVersions.filter((v): v is string => typeof v === 'string') : undefined,
+        supportedVersions: Array.isArray(o.supportedVersions)
+          ? o.supportedVersions.filter((v): v is string => typeof v === 'string').slice(0, MAX_STRING).map(cap)
+          : undefined,
       });
     case 'stop':
       return { time, event: 'stop' };
