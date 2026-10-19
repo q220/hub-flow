@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import type { JourneyClient } from '../../shared/protocol.js';
@@ -71,11 +72,13 @@ export class FlowLogReader {
   private readonly open = new Map<string, OpenDay>();
   /** Warned about a failing read; again only once a read has worked */
   private warned = false;
+  /** Per parser and per flow folder: INTRO_FLOW_DIR can change for the same world */
+  private readonly cacheDir: string;
 
-  constructor(
-    private readonly dir: string,
-    private readonly cacheDir = path.join(config.cacheDir, 'flow-log', PARSER_KEY),
-  ) {}
+  constructor(private readonly dir: string, cacheRoot = path.join(config.cacheDir, 'flow-log')) {
+    const folder = crypto.createHash('sha1').update(path.resolve(dir)).digest('hex').slice(0, 8);
+    this.cacheDir = path.join(cacheRoot, `${PARSER_KEY}-${folder}`);
+  }
 
   /** Everything in the log now, or null when its folder is missing */
   async read(now = Date.now()): Promise<FlowLogData | null> {

@@ -357,3 +357,18 @@ test('caps the strings it keeps at 64 characters', async () => {
   // Cut between characters, not inside one
   assert.equal((data?.events[2] as { client: { brand: string } }).client.brand, 'a'.repeat(63) + '\u{1F600}');
 });
+
+test('each flow folder has its own cache', async () => {
+  // INTRO_FLOW_DIR changed for the same world: a day of the same name and size must not come from the other folder's cache
+  const root = tempDir();
+  const cacheRoot = path.join(root, 'cache');
+  const a = path.join(root, 'a'), b = path.join(root, 'b');
+  fs.mkdirSync(a);
+  fs.mkdirSync(b);
+  write(a, '2026-10-10', [EXAMPLE[0]]);
+  write(b, '2026-10-10', [EXAMPLE[0].replace('"welcome"', '"WELCOME"')]);
+  const room = async (dir: string) => ((await new FlowLogReader(dir, cacheRoot).read(NOW))?.events[0] as { room?: string }).room;
+  assert.equal(await room(a), 'welcome');
+  assert.equal(await room(b), 'WELCOME');
+  assert.equal(await room(a), 'welcome');
+});
