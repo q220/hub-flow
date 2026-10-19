@@ -2,16 +2,19 @@ import fs from 'fs';
 import path from 'path';
 import type {
   ClientGroup, EventImpact, FlowBucket, FlowCounts, FlowEvent, FlowPlayer, FlowResponse, FlowSignal, FlowSignalsResponse, IntroStatus,
-  NewRelease, PackGroup, PackHealthRow, PackInfo, PackResult, PackResultGroup, PlayerRecord, ReleaseCheck, SessionStats,
-  VersionPackResults,
+  JourneyCheck, JourneyDisagreement, NewRelease, PackGroup, PackHealthRow, PackInfo, PackResult, PackResultGroup,
+  PlayerRecord, ReleaseCheck, SessionStats, VersionPackResults,
 } from '../../shared/protocol.js';
 import { clientVersionName } from '../../shared/constants.js';
 import { DEFAULT_HUB_DATE } from '../../shared/protocol.js';
 import { introStatus, type IntroData } from './intro-progress.js';
 import type { SessionData } from './hub-sessions.js';
 import type { ProxyActivity } from './proxy-activity.js';
-import type { FlowHistory, LoggedFields } from './flow-history.js';
+import type { FlowHistory, HistoryEntry, LoggedFields } from './flow-history.js';
 import { releaseKey, type ReleaseLog } from './release-log.js';
+import {
+  clientName, journeyClient, journeyOutcome, journeyPack, summarizeJourney, type FlowLogSource, type JourneySummary,
+} from './journey.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const RETURN_WINDOW_MS = 7 * DAY;
@@ -55,6 +58,8 @@ export interface FlowSources {
   releases: ReleaseLog | null;
   serverVersion: string;
   events: FlowEvent[];
+  /** MCME-Introduction's flow log: each player's way through the rooms */
+  flowLog: FlowLogSource | null;
 }
 
 /** Dated changes to mark on the charts: FLOW_EVENTS_FILE, else events.json in the working directory */
@@ -79,7 +84,8 @@ function emptyCounts(): FlowCounts {
   };
 }
 
-function add(c: FlowCounts, p: FlowPlayer): void {
+/** `packResult`: the intro's (introPack), unless counting a release's own players */
+function add(c: FlowCounts, p: FlowPlayer, packResult = p.introPack): void {
   c.players++;
   c[p.outcome]++;
   if (p.reachedServer !== undefined) {
@@ -93,13 +99,16 @@ function add(c: FlowCounts, p: FlowPlayer): void {
     c.returnEligible++;
     if (p.returned7d) c.returned7d++;
   }
-  if (p.pack) {
+  if (packResult) {
     c.packKnown++;
-    if (p.pack.result === 'loaded') c.packLoaded++;
-    else if (isFailure(p.pack.result)) c.packFailed++;
-    else if (p.pack.result === 'declined') c.packDeclined++;
+    if (packResult === 'loaded') c.packLoaded++;
+    else if (isFailure(packResult)) c.packFailed++;
+    else if (packResult === 'declined') c.packDeclined++;
   }
 }
+
+/** Disagreements that are about the outcome; the others are often right */
+const OUTCOME_DISAGREEMENTS = new Set<JourneyDisagreement>(['finish-not-listed', 'listed-not-finished', 'room']);
 
 function isFailure(r: PackResult): boolean {
   return r === 'failed_reload' || r === 'failed_download';
@@ -174,6 +183,8 @@ export class FlowModel {
   private readonly fastCheck: ReleaseCheck;
   /** What the current logs say about each covered player, to keep in the history */
   private readonly fromLogs = new Map<string, { firstJoined: number; logged: LoggedFields }>();
+  /** The same for the flow log */
+  private readonly fromJourneys = new Map<string, { firstJoined: number; summary: JourneySummary }>();
 
   constructor(private readonly src: FlowSources, readonly generatedAt = Date.now()) {
     this.flowPlayers = src.players
@@ -186,13 +197,16 @@ export class FlowModel {
 
   private toFlowPlayer(p: PlayerRecord): FlowPlayer {
     const firstJoined = p.firstJoined!;
+    const pack = this.src.packs?.get(p.uuid);
     const fp: FlowPlayer = {
       uuid: p.uuid,
       name: p.name,
       firstJoined,
       lastOnline: p.lastOnline,
       outcome: this.src.intro ? introStatus(this.src.intro, p) : 'other',
-      pack: this.src.packs?.get(p.uuid),
+      outcomeFrom: 'inferred',
+      pack,
+      introPack: pack?.result,
       clientVersion: this.clientVersion(p.uuid),
       x: p.x,
       y: p.y,
@@ -228,16 +242,89 @@ export class FlowModel {
       fp.reachedServer ??= kept.reachedServer;
       fp.returned7d ??= kept.returned7d;
     }
+    this.applyJourney(fp, kept);
     return fp;
+  }
+
+  /**
+   * The intro from the flow log for players it covers (joined since its
+   * first start), else from the history once their part of the log is gone.
+   * The finished list and the position stay for everyone before.
+   */
+  private applyJourney(fp: FlowPlayer, kept: HistoryEntry | undefined): void {
+    const start = this.src.flowLog?.coverageStart ?? null;
+    const journey = start !== null && fp.firstJoined >= start ? this.src.flowLog!.journeys.get(fp.uuid) : undefined;
+    // Reminders or confirms alone say nothing about the rooms: the older sources decide
+    const outcome = journey && journeyOutcome(journey);
+    if (journey) fp.journey = journey;
+    if (journey && outcome) {
+      const pack = journeyPack(journey);
+      const c = journeyClient(journey);
+      const client = c && clientName(c);
+      const disagreements = this.disagreements(fp, outcome, pack, client);
+      fp.outcome = outcome;
+      fp.outcomeFrom = 'log';
+      if (pack) fp.introPack = pack;
+      if (client) fp.clientVersion = client;
+      if (disagreements.length > 0) fp.disagreements = disagreements;
+      this.fromJourneys.set(fp.uuid, { firstJoined: fp.firstJoined, summary: summarizeJourney(journey)! });
+    } else if (kept?.journey) {
+      const s = kept.journey;
+      // Frozen 8 days after the first join: the list knows who finished later
+      fp.outcome = this.src.intro?.finished.has(fp.uuid) ? 'finished' : s.outcome;
+      fp.outcomeFrom = 'history';
+      if (s.pack) fp.introPack = s.pack;
+      const client = clientName(s);
+      if (client) fp.clientVersion = client;
+    }
+  }
+
+  /** Where the journey and what the older sources say (still in fp) disagree */
+  private disagreements(fp: FlowPlayer, outcome: IntroStatus, pack: PackResult | undefined, client: string | undefined): JourneyDisagreement[] {
+    const out: JourneyDisagreement[] = [];
+    if (this.src.intro) {
+      const listed = this.src.intro.finished.has(fp.uuid);
+      if (outcome === 'finished' && !listed) out.push('finish-not-listed');
+      else if (outcome !== 'finished' && listed) out.push('listed-not-finished');
+      else if (outcome !== fp.outcome) out.push('room');
+    }
+    if (client && fp.clientVersion && client !== fp.clientVersion) out.push('client');
+    if (pack && fp.pack && pack !== fp.pack.result) out.push('pack');
+    return out;
   }
 
   /** Keep what the current logs say, so it outlives them */
   recordHistory(history: FlowHistory): void {
     for (const [uuid, { firstJoined, logged }] of this.fromLogs) history.record(uuid, firstJoined, logged, this.generatedAt);
+    // A partial read could replace a good summary, or freeze a wrong one
+    if (this.src.flowLog?.complete === false) return;
+    for (const [uuid, { firstJoined, summary }] of this.fromJourneys) history.recordJourney(uuid, firstJoined, summary, this.generatedAt);
+  }
+
+  /** How the journeys compare with the older inference, for these players */
+  private journeyCheck(players: FlowPlayer[]): JourneyCheck | null {
+    const log = this.src.flowLog;
+    if (!log) return null;
+    const c: JourneyCheck = {
+      coverageStart: log.coverageStart, badLines: log.badLines, complete: log.complete,
+      covered: 0, withJourney: 0, fromHistory: 0,
+      disagreements: 0, finishNotListed: 0, listedNotFinished: 0, roomDiffers: 0, clientDiffers: 0, packDiffers: 0,
+    };
+    const field: Record<JourneyDisagreement, 'finishNotListed' | 'listedNotFinished' | 'roomDiffers' | 'clientDiffers' | 'packDiffers'> = {
+      'finish-not-listed': 'finishNotListed', 'listed-not-finished': 'listedNotFinished', room: 'roomDiffers', client: 'clientDiffers', pack: 'packDiffers',
+    };
+    for (const p of players) {
+      if (log.coverageStart !== null && p.firstJoined >= log.coverageStart) c.covered++;
+      if (p.outcomeFrom === 'log') c.withJourney++;
+      else if (p.outcomeFrom === 'history') c.fromHistory++;
+      for (const d of p.disagreements ?? []) c[field[d]]++;
+      if (p.disagreements?.some((d) => OUTCOME_DISAGREEMENTS.has(d))) c.disagreements++;
+    }
+    return c;
   }
 
   /** The earliest first join for which a log-derived field is known, from the logs or the history */
-  private knownFrom(coverageStart: number | undefined, field: keyof LoggedFields): number | null {
+  private knownFrom(coverageStart: number | undefined, field: keyof LoggedFields | 'journey'): number | null {
     const kept = this.src.history?.earliest(field) ?? null;
     if (coverageStart === undefined) return kept;
     return kept === null ? coverageStart : Math.min(coverageStart, kept);
@@ -279,13 +366,13 @@ export class FlowModel {
     const byPack = new Map<string, PackGroup>();
     const byClient = new Map<string, ClientGroup>();
     for (const p of players) {
-      if (this.src.clients) {
+      if (this.src.clients || this.src.flowLog) {
         const version = p.clientVersion ?? 'Unknown';
         let cg = byClient.get(version);
         if (!cg) byClient.set(version, (cg = { version, matchesServer: version === this.src.serverVersion, ...emptyCounts() }));
         add(cg, p);
       }
-      const result = p.pack?.result ?? 'unknown';
+      const result = p.introPack ?? 'unknown';
       let r = byResult.get(result);
       if (!r) byResult.set(result, (r = { result, ...emptyCounts() }));
       add(r, p);
@@ -293,7 +380,8 @@ export class FlowModel {
         const key = `${p.pack.pack}\0${p.pack.version}\0${p.pack.variant}`;
         let g = byPack.get(key);
         if (!g) byPack.set(key, (g = { pack: p.pack.pack, version: p.pack.version, variant: p.pack.variant, ...emptyCounts() }));
-        add(g, p);
+        // The release's own result: the intro's may belong to another pack
+        add(g, p, p.pack.result);
       }
     }
 
@@ -321,7 +409,10 @@ export class FlowModel {
         clients: this.src.clients !== null,
         sessionsFrom: this.knownFrom(this.src.sessions?.coverageStart, 'sessions'),
         activityFrom: this.knownFrom(this.src.activity?.coverageStart, 'reachedServer'),
+        flowLog: this.src.flowLog !== null,
+        flowLogFrom: this.knownFrom(this.src.flowLog?.coverageStart ?? undefined, 'journey'),
       },
+      journeys: this.journeyCheck(players),
       serverVersion: this.src.serverVersion,
       range: { from, to, bucket },
       previous,
@@ -433,7 +524,7 @@ export class FlowModel {
       const version = p.clientVersion ?? 'Unknown';
       let g = groups.get(version);
       if (!g) groups.set(version, (g = { ...emptyVersion(version, version === serverVersion), finished: 0, releaseCounts: new Map() }));
-      addResult(g, p.pack?.result);
+      addResult(g, p.introPack);
       if (p.outcome === 'finished') g.finished!++;
       if (p.pack?.pack) {
         const name = releaseName(p.pack);
@@ -574,7 +665,7 @@ export class FlowModel {
     const completionLevel = level(completionDrop, 10, 25);
     if (completionLevel) {
       const notFinished = recentPlayers.filter((p) => p.outcome !== 'finished');
-      const failedPack = notFinished.filter((p) => p.pack && isFailure(p.pack.result)).length;
+      const failedPack = notFinished.filter((p) => p.introPack && isFailure(p.introPack)).length;
       const why = failedPack >= notFinished.length * 0.4
         ? ` ${plural(failedPack, 'player')} of the ${notFinished.length.toLocaleString('en-US')} who did not finish had a resource pack that failed to load.`
         : '';
@@ -644,8 +735,8 @@ export class FlowModel {
         const share = ps.length / recent.players;
         const rate = finishedShare(ps);
         if (share < 0.1 || (ref - rate) * 100 < 25) continue;
-        const known = ps.filter((p) => p.pack).length;
-        const failed = ps.filter((p) => p.pack && isFailure(p.pack.result)).length;
+        const known = ps.filter((p) => p.introPack).length;
+        const failed = ps.filter((p) => p.introPack && isFailure(p.introPack)).length;
         out.push({
           id: `client-version:${version}`,
           level: share >= 0.25 ? 'critical' : 'warning',
@@ -690,6 +781,18 @@ export class FlowModel {
         level: 'warning',
         title: `${plural(recent.other, 'new player')} left the intro rooms without being recorded as finished`,
         detail: 'They are not on finishedPlayerList.uid and their last position is outside both rooms. Check whether the intro chain still records finishers.',
+      });
+    }
+
+    // Finished by the flow log, which records the finish before the list is written
+    const logFinishers = recentPlayers.filter((p) => p.outcomeFrom === 'log' && p.outcome === 'finished');
+    const unlisted = logFinishers.filter((p) => p.disagreements?.includes('finish-not-listed')).length;
+    if (unlisted >= 5 && unlisted / logFinishers.length >= 0.03) {
+      out.push({
+        id: 'finish-not-listed',
+        level: 'warning',
+        title: `${plural(unlisted, 'new player')} finished the intro but are not on the finished list`,
+        detail: `${unlisted.toLocaleString('en-US')} of the ${logFinishers.length.toLocaleString('en-US')} who finished in the last 14 days by the flow log are not on finishedPlayerList.uid, so they would get the intro again. Check whether the intro chain still records finishers.`,
       });
     }
 

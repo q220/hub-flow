@@ -164,7 +164,7 @@ export interface FlowCounts {
   returnEligible: number;
   /** ...of those, connected again on a later day within 7 days */
   returned7d: number;
-  /** Players with a pack record, and how those ended */
+  /** Players with an intro pack result (FlowPlayer.introPack), and how those ended */
   packKnown: number;
   packLoaded: number;
   packFailed: number;
@@ -182,7 +182,21 @@ export interface FlowPlayer {
   firstJoined: number;
   lastOnline?: number;
   outcome: IntroStatus;
+  /**
+   * Where outcome, introPack and clientVersion come from: the player's journey
+   * in the flow log, its summary in the history once the log is gone, or (for
+   * players who joined before the flow log) the finished list, the player's
+   * position, Architect and Plan
+   */
+  outcomeFrom: 'log' | 'history' | 'inferred';
+  /** The latest pack Architect recorded for the player, network-wide */
   pack?: PackInfo;
+  /** The pack result of the intro (journeyPack), else the latest pack's; the counts use this */
+  introPack?: PackResult;
+  /** The player's way through the intro rooms; only for players the flow log covers */
+  journey?: PlayerJourney;
+  /** Where the journey disagrees with the older sources; absent when it does not */
+  disagreements?: JourneyDisagreement[];
   /** Hub sessions in the server logs; absent when the first join predates the oldest log */
   sessions?: number;
   firstSessionMs?: number;
@@ -190,7 +204,7 @@ export interface FlowPlayer {
   reachedServer?: boolean;
   /** Connected again on a later day within 7 days; absent when unknown or too recent */
   returned7d?: boolean;
-  /** Game version of the client's latest join (from Plan); absent when unknown */
+  /** Game version of the client in the intro (journey), else of its latest join (Plan); absent when unknown */
   clientVersion?: string;
   x: number;
   y: number;
@@ -303,9 +317,50 @@ export interface SessionStats {
   medianFirstSessionMs: number | null;
 }
 
+/**
+ * Where a journey disagrees with the older sources: a `finish` for a player
+ * not on finishedPlayerList.uid, the list without a `finish`, another room
+ * than the player's position gives; or, often for good reason (Plan and
+ * Architect keep the latest, the log the intro's), another client version or
+ * pack result
+ */
+export type JourneyDisagreement = 'finish-not-listed' | 'listed-not-finished' | 'room' | 'client' | 'pack';
+
+/** How the flow log's journeys compare with the older inference, for the new players in the range */
+export interface JourneyCheck {
+  /** The first `start` in the flow log files still kept; null before one */
+  coverageStart: number | null;
+  /** Lines skipped as unreadable: not JSON, or without a time, an event or a player (an incomplete last line is not counted) */
+  badLines: number;
+  /** False when a day file could not be read: the journeys are partial, and none is recorded in the history */
+  complete: boolean;
+  /** Players who joined since coverageStart */
+  covered: number;
+  /** ...of those, with a journey that gives the outcome (a room or a finish); the others are inferred as before */
+  withJourney: number;
+  /** Players whose intro comes from the history, their part of the log being gone */
+  fromHistory: number;
+  /** Players with a journey whose outcome differs from the inferred one: the next three together */
+  disagreements: number;
+  finishNotListed: number;
+  listedNotFinished: number;
+  roomDiffers: number;
+  /** Not counted as disagreements: Plan and Architect keep each player's latest version and pack */
+  clientDiffers: number;
+  packDiffers: number;
+}
+
 export interface FlowResponse {
   generatedAt: number;
-  sources: { intro: boolean; packs: boolean; clients: boolean; sessionsFrom: number | null; activityFrom: number | null };
+  sources: {
+    intro: boolean; packs: boolean; clients: boolean; sessionsFrom: number | null; activityFrom: number | null;
+    /** The flow log's folder was found */
+    flowLog: boolean;
+    /** Earliest first join with a journey: the flow log's coverage, or the history's */
+    flowLogFrom: number | null;
+  };
+  /** Null without the flow log */
+  journeys: JourneyCheck | null;
   /** The hub's Minecraft version */
   serverVersion: string;
   range: { from: number; to: number; bucket: 'day' | 'week' };
@@ -339,4 +394,59 @@ export interface FlowSignalsResponse {
 export interface FlowPlayersResponse {
   total: number;
   players: FlowPlayer[];
+}
+
+/* ---- MCME-Introduction's flow log (1.4.0+) ---- */
+
+/** The client fields of an `enter` or `skip`; any of them can be missing */
+export interface JourneyClient {
+  /** ViaVersion's name for the protocol, e.g. 26.2 or 26.1-26.1.2 */
+  version?: string;
+  protocol?: number;
+  /** The brand the client reported, e.g. vanilla or fabric; null when it sent none */
+  brand?: string | null;
+  /** MCME-Architect saw MCME's marker mod */
+  marker?: boolean;
+  /** The version is one the compatibility room lets through */
+  supported?: boolean;
+}
+
+/** One stay in an intro room, from its `enter` to its `exit` */
+export interface JourneyVisit {
+  /** welcome or compatibility; absent if the log did not say */
+  room?: string;
+  /** When the player was put in the room */
+  at: number;
+  client: JourneyClient;
+  /** The compatibility room's warning screen: version, modded, mcme or missing_mod */
+  warning?: string;
+  /** The room's pack results in order: loaded, declined, failed_download, failed_reload, invalid_url, timeout; not_sent is not final */
+  packs: { result: string; waitMs?: number }[];
+  /**
+   * Absent while the player is still in the room. how: walked, confirmed,
+   * skipped, quit, left or stopped, as the plugin logs them, or unknown when
+   * the server stopped without a clean shutdown (two starts without a stop)
+   */
+  exit?: { how: string; at?: number; stayedMs?: number };
+}
+
+/** A room the player was passed over without being put in it */
+export interface JourneySkip {
+  room?: string;
+  at: number;
+  client: JourneyClient;
+  /** true: the client needs nothing; false: it would get the room, but the player confirmed before */
+  compatible?: boolean;
+}
+
+/** A player's way through the intro rooms, from the flow log */
+export interface PlayerJourney {
+  visits: JourneyVisit[];
+  skips: JourneySkip[];
+  /** The first `finish`; first: whether it was the player's first time through */
+  finish?: { at: number; first?: boolean };
+  /** Times the compatibility warning was shown again outside the rooms */
+  reminders: number;
+  /** /confirm: optifine, ignore or reset; inRoom: used in one of the rooms */
+  confirms: { at: number; choice?: string; inRoom?: boolean }[];
 }
