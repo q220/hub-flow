@@ -355,3 +355,43 @@ export interface JourneyClient {
   /** The version is one the compatibility room lets through */
   supported?: boolean;
 }
+
+/** One stay in an intro room, from its `enter` to its `exit` */
+export interface JourneyVisit {
+  /** welcome or compatibility; absent if the log did not say */
+  room?: string;
+  /** When the player was put in the room */
+  at: number;
+  client: JourneyClient;
+  /** The compatibility room's warning screen: version, modded, mcme or missing_mod */
+  warning?: string;
+  /** The room's pack results in order: loaded, declined, failed_download, failed_reload, invalid_url, timeout; not_sent is not final */
+  packs: { result: string; waitMs?: number }[];
+  /**
+   * Absent while the player is still in the room. how: walked, confirmed,
+   * skipped, quit, left or stopped, as the plugin logs them, or unknown when
+   * the server stopped without a clean shutdown (two starts without a stop)
+   */
+  exit?: { how: string; at?: number; stayedMs?: number };
+}
+
+/** A room the player was passed over without being put in it */
+export interface JourneySkip {
+  room?: string;
+  at: number;
+  client: JourneyClient;
+  /** true: the client needs nothing; false: it would get the room, but the player confirmed before */
+  compatible?: boolean;
+}
+
+/** A player's way through the intro rooms, from the flow log */
+export interface PlayerJourney {
+  visits: JourneyVisit[];
+  skips: JourneySkip[];
+  /** The first `finish`; first: whether it was the player's first time through */
+  finish?: { at: number; first?: boolean };
+  /** Times the compatibility warning was shown again outside the rooms */
+  reminders: number;
+  /** /confirm: optifine, ignore or reset; inRoom: used in one of the rooms */
+  confirms: { at: number; choice?: string; inRoom?: boolean }[];
+}

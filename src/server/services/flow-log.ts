@@ -194,7 +194,7 @@ const bool = (v: unknown) => (typeof v === 'boolean' ? v : undefined);
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 
 /** The object without its undefined fields, so events compare and cache alike */
-function defined<T extends object>(o: T): T {
+export function defined<T extends object>(o: T): T {
   for (const key of Object.keys(o) as (keyof T)[]) {
     if (o[key] === undefined) delete o[key];
   }
