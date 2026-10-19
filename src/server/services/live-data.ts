@@ -10,6 +10,8 @@ import { loadClientVersions } from './client-versions.js';
 import { FlowModel, loadFlowEvents } from './flow.js';
 import { FlowHistory, historyFile } from './flow-history.js';
 import { ReleaseLog, releaseLogFile } from './release-log.js';
+import { FlowLogReader, flowLogDir } from './flow-log.js';
+import { assembleJourneys } from './journey.js';
 
 /** The flow model the API serves; replaced whole on every refresh */
 export const liveData: { flow: FlowModel | null } = { flow: null };
@@ -19,10 +21,12 @@ const CACHE_SAVE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let lastCacheSave = 0;
 let history: FlowHistory | null = null;
 let releases: ReleaseLog | null = null;
+/** Kept between refreshes: it remembers how far today's and yesterday's files were read */
+let flowLogReader: FlowLogReader | null = null;
 
 /**
  * Re-read everything the flow and the map are built from: player files
- * (incrementally), intro progress, pack results and hub sessions.
+ * (incrementally), intro progress, pack results, hub sessions and the flow log.
  */
 export async function refreshData(opts: { initial: boolean; serverVersion: string }): Promise<void> {
   const worldPath = config.worldPath;
@@ -52,16 +56,19 @@ export async function refreshData(opts: { initial: boolean; serverVersion: strin
 
   const intro = loadIntroData(worldPath);
   playerStore.setIntroData(intro);
-  const [packs, sessions, activity, clients] = await Promise.all([
+  flowLogReader ??= new FlowLogReader(flowLogDir(worldPath));
+  const [packs, sessions, activity, clients, log] = await Promise.all([
     loadPackStatus(worldPath), loadHubSessions(worldPath), loadProxyActivity(worldPath), loadClientVersions(worldPath),
+    flowLogReader.read(),
   ]);
+  const flowLog = log ? { coverageStart: log.coverageStart, badLines: log.badLines, journeys: assembleJourneys(log.events) } : null;
   const events = loadFlowEvents();
   history ??= FlowHistory.load();
   releases ??= ReleaseLog.load();
   // Without pack data nothing is noted, so a release is never dated by an outage
   if (packs) releases.observe([...packs.values()].filter((p) => p.pack && p.version), Date.now());
   const flow = new FlowModel({
-    players: indexed.players, intro, packs, sessions, activity, clients, history, releases, serverVersion: opts.serverVersion, events,
+    players: indexed.players, intro, packs, sessions, activity, clients, history, releases, serverVersion: opts.serverVersion, events, flowLog,
   });
   flow.recordHistory(history);
   try {
@@ -84,6 +91,9 @@ export async function refreshData(opts: { initial: boolean; serverVersion: strin
     clients ? `${clients.size} client versions` : 'no client versions',
     sessions ? `hub sessions since ${new Date(sessions.coverageStart).toLocaleDateString('en-CA')}` : 'no hub logs',
     activity ? `proxy activity since ${new Date(activity.coverageStart).toLocaleDateString('en-CA')}` : 'no proxy logs',
+    !flowLog ? 'no flow log'
+      : `${flowLog.coverageStart !== null ? `flow log since ${new Date(flowLog.coverageStart).toLocaleDateString('en-CA')}` : 'flow log without a start yet'}`
+        + ` (${flowLog.journeys.size} journeys${flowLog.badLines > 0 ? `, ${flowLog.badLines} unreadable lines` : ''})`,
     `${events.length} events`,
     `history of ${history.size} players`,
   ];

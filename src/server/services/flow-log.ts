@@ -172,7 +172,11 @@ export class FlowLogReader {
     }
     for (const f of cached) {
       if (f.endsWith('.jsonl.json') && !closed.has(f.slice(0, -'.json'.length))) {
-        fs.rmSync(path.join(this.cacheDir, f), { force: true });
+        try {
+          fs.rmSync(path.join(this.cacheDir, f), { force: true });
+        } catch {
+          // Tried again at the next refresh
+        }
       }
     }
   }
