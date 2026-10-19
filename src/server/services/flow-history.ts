@@ -14,9 +14,12 @@ import type { JourneySummary } from './journey.js';
  * from the log fields. Unlike the caches, this cannot be rebuilt.
  *
  * Version 2 added the journey. A version 1 file is read as it is and
- * written as version 2 at the next save, a copy of it kept beside it as
- * flow-history.v1.json for a release that reads only version 1. A file of
- * a newer version is left alone: neither used nor written over.
+ * written as version 2 at the next save. A copy of it is kept beside it as
+ * flow-history.v1.json, to put back by hand if this release is rolled back:
+ * the release before reads only flow-history.json, and sets a version 2
+ * file aside. That copy is never written over; a later migration keeps its
+ * own as flow-history.v1-<time>.json. A file of a newer version is left
+ * alone: neither used nor written over.
  */
 
 export interface HistoryEntry {
@@ -53,6 +56,8 @@ function journeyPart(e: HistoryEntry | undefined): Pick<HistoryEntry, 'journey' 
 
 export class FlowHistory {
   private changed: boolean;
+  /** The version 1 file has been copied (a save can fail after the copy) */
+  private v1Copied = false;
 
   private constructor(
     private readonly file: string,
@@ -138,9 +143,16 @@ export class FlowHistory {
     if (this.readOnly || !this.changed) return false;
     const dir = path.dirname(this.file);
     fs.mkdirSync(dir, { recursive: true });
-    if (this.fileVersion === 1 && fs.existsSync(this.file)) {
-      // The file as the release before this one wrote it, should that release run again
-      fs.copyFileSync(this.file, path.join(dir, `${path.basename(this.file, '.json')}.v1.json`));
+    if (this.fileVersion === 1 && !this.v1Copied && fs.existsSync(this.file)) {
+      // To restore by hand on a rollback; an earlier copy may be the only one of a longer history
+      const name = path.basename(this.file, '.json');
+      try {
+        fs.copyFileSync(this.file, path.join(dir, `${name}.v1.json`), fs.constants.COPYFILE_EXCL);
+      } catch (e: any) {
+        if (e.code !== 'EEXIST') throw e;
+        fs.copyFileSync(this.file, path.join(dir, `${name}.v1-${Date.now()}.json`), fs.constants.COPYFILE_EXCL);
+      }
+      this.v1Copied = true;
     }
     const tmp = `${this.file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ version: FILE_VERSION, players: Object.fromEntries(this.entries) }));

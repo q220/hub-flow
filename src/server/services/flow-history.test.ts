@@ -141,3 +141,33 @@ test('the earliest first join with a journey', () => {
   assert.equal(history.earliest('journey'), NOW - 5 * DAY);
   assert.equal(history.earliest('sessions'), 1790668800000);
 });
+
+test('a migration never writes over an earlier copy of version 1', () => {
+  // After a rollback the old release writes a fresh version 1 file; the copy from the first upgrade must survive
+  const file = historyIn('{"version":1,"players":{}}');
+  const dir = path.dirname(file);
+  fs.writeFileSync(path.join(dir, 'flow-history.v1.json'), V1_FILE);
+  const history = FlowHistory.load(file);
+  assert.equal(history.save(), true);
+  assert.equal(fs.readFileSync(path.join(dir, 'flow-history.v1.json'), 'utf-8'), V1_FILE);
+  const copies = fs.readdirSync(dir).filter((n) => /^flow-history\.v1-\d+\.json$/.test(n));
+  assert.equal(copies.length, 1);
+  assert.equal(fs.readFileSync(path.join(dir, copies[0]), 'utf-8'), '{"version":1,"players":{}}');
+});
+
+test('a save that fails after the copy leaves the version 1 file as it was', () => {
+  const file = historyIn(V1_FILE);
+  const dir = path.dirname(file);
+  const history = FlowHistory.load(file);
+  history.record('a', NOW - DAY, { sessions: 1 }, NOW);
+  fs.mkdirSync(`${file}.tmp`); // the write of the new file fails
+  assert.throws(() => history.save());
+  assert.equal(fs.readFileSync(file, 'utf-8'), V1_FILE);
+  assert.equal(fs.readFileSync(path.join(dir, 'flow-history.v1.json'), 'utf-8'), V1_FILE);
+
+  // The next save works, and keeps no second copy
+  fs.rmdirSync(`${file}.tmp`);
+  assert.equal(history.save(), true);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf-8')).version, 2);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['flow-history.json', 'flow-history.v1.json']);
+});
