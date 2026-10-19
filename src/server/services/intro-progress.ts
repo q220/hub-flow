@@ -28,9 +28,13 @@ export interface IntroData {
 }
 
 /** Plugin folder: INTRO_DIR, else plugins/MCME-Introduction next to the world folder */
-export function loadIntroData(worldPath: string): IntroData | null {
-  const dir = process.env.INTRO_DIR
+export function introDir(worldPath: string): string {
+  return process.env.INTRO_DIR
     || path.join(path.dirname(path.resolve(worldPath)), 'plugins', 'MCME-Introduction');
+}
+
+export function loadIntroData(worldPath: string): IntroData | null {
+  const dir = introDir(worldPath);
   const finishedFile = path.join(dir, 'finishedPlayerList.uid');
   if (!fs.existsSync(finishedFile)) return null;
 
