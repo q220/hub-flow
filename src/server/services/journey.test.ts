@@ -200,12 +200,14 @@ test("the intro's pack result: the last final one, else the last", () => {
   assert.equal(roomPackWait(j, 'compatibility'), undefined);
 });
 
-test('the outcome: finished, the room of the last visit, or other', () => {
+test('the outcome: finished, the room of the last visit, or other; none without rooms or a finish', () => {
   const outcome = (...lines: object[]) => journeyOutcome(assembleJourneys(events(...lines)).get(A)!);
   // Still in the room
   assert.equal(outcome({ time: '2026-10-18T07:00:00Z', event: 'enter', uuid: A, room: 'welcome' }), 'welcome');
-  // Only reminders: never put in a room
-  assert.equal(outcome({ time: '2026-10-18T07:00:00Z', event: 'reminder', uuid: A, warning: 'modded' }), 'other');
+  // Only reminders and confirms: the log says nothing of the rooms, so the finished list decides
+  assert.equal(outcome({ time: '2026-10-18T07:00:00Z', event: 'reminder', uuid: A, warning: 'modded' }), undefined);
+  assert.equal(outcome({ time: '2026-10-18T07:00:00Z', event: 'confirm', uuid: A, choice: 'ignore', inRoom: false }), undefined);
+  assert.equal(summarizeJourney(assembleJourneys(events({ time: '2026-10-18T07:00:00Z', event: 'reminder', uuid: A, warning: 'modded' })).get(A)!), undefined);
   // A room hub-flow does not know
   assert.equal(outcome({ time: '2026-10-18T07:00:00Z', event: 'enter', uuid: A, room: 'lobby' }), 'other');
   // Passed over both rooms, but no finish logged

@@ -312,3 +312,23 @@ test('a reader that throws leaves the refresh without a flow log', async () => {
   assert.equal(log?.journeys.get(P.quitCompat)?.visits.length, 2);
   assert.equal(log?.badLines, 1);
 });
+
+test('a journey of reminders alone leaves the outcome to the finished list', () => {
+  const id = uuid(20);
+  const src = sources({
+    players: [player(id, '2026-10-18T10:00:00Z', ELSEWHERE)],
+    intro: { ...intro, finished: new Set([id]) },
+    flowLog: {
+      coverageStart: COVERAGE, badLines: 0, complete: true,
+      journeys: assembleJourneys(events({ time: '2026-10-18T10:05:00Z', event: 'reminder', uuid: id, warning: 'modded' })),
+    },
+  });
+  const model = new FlowModel(src, NOW);
+  const p = byUuid(model).get(id)!;
+  assert.equal(p.outcome, 'finished');
+  assert.equal(p.outcomeFrom, 'inferred');
+  assert.equal(p.journey?.reminders, 1);
+  assert.equal(p.disagreements, undefined);
+  model.recordHistory(src.history!);
+  assert.equal(src.history!.get(id), undefined);
+});

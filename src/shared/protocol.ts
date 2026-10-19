@@ -336,7 +336,7 @@ export interface JourneyCheck {
   complete: boolean;
   /** Players who joined since coverageStart */
   covered: number;
-  /** ...of those, with a journey; the others are inferred as before */
+  /** ...of those, with a journey that gives the outcome (a room or a finish); the others are inferred as before */
   withJourney: number;
   /** Players whose intro comes from the history, their part of the log being gone */
   fromHistory: number;

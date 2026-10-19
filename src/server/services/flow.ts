@@ -254,8 +254,10 @@ export class FlowModel {
   private applyJourney(fp: FlowPlayer, kept: HistoryEntry | undefined): void {
     const start = this.src.flowLog?.coverageStart ?? null;
     const journey = start !== null && fp.firstJoined >= start ? this.src.flowLog!.journeys.get(fp.uuid) : undefined;
-    if (journey) {
-      const outcome = journeyOutcome(journey);
+    // Reminders or confirms alone say nothing about the rooms: the older sources decide
+    const outcome = journey && journeyOutcome(journey);
+    if (journey) fp.journey = journey;
+    if (journey && outcome) {
       const pack = journeyPack(journey);
       const c = journeyClient(journey);
       const client = c && clientName(c);
@@ -264,9 +266,8 @@ export class FlowModel {
       fp.outcomeFrom = 'log';
       if (pack) fp.introPack = pack;
       if (client) fp.clientVersion = client;
-      fp.journey = journey;
       if (disagreements.length > 0) fp.disagreements = disagreements;
-      this.fromJourneys.set(fp.uuid, { firstJoined: fp.firstJoined, summary: summarizeJourney(journey) });
+      this.fromJourneys.set(fp.uuid, { firstJoined: fp.firstJoined, summary: summarizeJourney(journey)! });
     } else if (kept?.journey) {
       const s = kept.journey;
       // Frozen 8 days after the first join: the list knows who finished later

@@ -122,9 +122,15 @@ export function assembleJourneys(events: FlowLogEvent[]): Map<string, PlayerJour
   return journeys;
 }
 
-/** Finished, else the room of the last visit; other when there is none or the player got out another way */
-export function journeyOutcome(j: PlayerJourney): IntroStatus {
+/**
+ * Finished, else the room of the last visit; other when the player was only
+ * passed over rooms or got out another way. Undefined when the log has no
+ * room or finish for the player (only reminders or confirms): it says
+ * nothing about the intro then.
+ */
+export function journeyOutcome(j: PlayerJourney): IntroStatus | undefined {
   if (j.finish) return 'finished';
+  if (j.visits.length === 0 && j.skips.length === 0) return undefined;
   const last = j.visits.at(-1);
   if (!last || last.exit?.how === 'left') return 'other';
   return last.room === 'welcome' || last.room === 'compatibility' ? last.room : 'other';
@@ -179,12 +185,15 @@ export function clientName(c: Pick<JourneyClient, 'protocol' | 'version'>): stri
   return c.version;
 }
 
-export function summarizeJourney(j: PlayerJourney): JourneySummary {
+/** Undefined for a journey without an outcome (journeyOutcome) */
+export function summarizeJourney(j: PlayerJourney): JourneySummary | undefined {
+  const outcome = journeyOutcome(j);
+  if (!outcome) return undefined;
   const client = journeyClient(j) ?? {};
   const last = j.visits.at(-1);
   const choices = j.confirms.flatMap((c) => (c.choice ? [c.choice] : []));
   return defined({
-    outcome: journeyOutcome(j),
+    outcome,
     pack: journeyPack(j),
     welcomePackWaitMs: roomPackWait(j, 'welcome'),
     compatibilityPackWaitMs: roomPackWait(j, 'compatibility'),
